@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Helios — Solar Flare Forecast</title>
+<meta name="description" content="Live solar flare nowcast and 12/24/48-hour forecast from NOAA GOES X-ray flux, NOAA region forecasts, and a SWAN-SF machine-learning model." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Surfaces — deep space, layered */
+    --bg-0: #05060c;
+    --bg-1: #0b0e1a;
+    --surface: rgba(18, 22, 38, 0.72);
+    --surface-2: rgba(28, 33, 54, 0.65);
+    --border: rgba(120, 140, 200, 0.16);
+    --border-strong: rgba(140, 160, 220, 0.30);
+
+    /* Text */
+    --text: #eaf0ff;
+    --text-dim: #9aa6c8;
+    --text-faint: #6b769a;
+
+    /* Brand / accents */
+    --accent: #4f8cff;
+    --accent-2: #7b5cff;
+
+    /* Flare severity scale (also paired with text+icon, never color alone) */
+    --quiet:   #2fbf71;
+    --c-class: #f5c542;
+    --m-class: #ff8a3d;
+    --x-class: #ff4d5e;
+    --extreme: #ff2bd0;
+
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+    --maxw: 1180px;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: var(--text);
+    background: var(--bg-0);
+    line-height: 1.55;
+    overflow-x: hidden;
+  }
+
+  /* Aurora / solar backdrop (decorative, behind everything) */
+  .backdrop {
+    position: fixed; inset: 0; z-index: -2;
+    background:
+      radial-gradient(1100px 700px at 78% -8%, rgba(123, 92, 255, 0.22), transparent 60%),
+      radial-gradient(900px 600px at 8% 0%, rgba(79, 140, 255, 0.18), transparent 55%),
+      radial-gradient(1200px 900px at 50% 120%, rgba(255, 138, 61, 0.10), transparent 60%),
+      linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  }
+  .stars { position: fixed; inset: 0; z-index: -1; opacity: 0.5; }
+
+  a { color: var(--accent); }
+  h1, h2, h3 { font-family: "Space Grotesk", sans-serif; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+  .mono { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 64px; }
+
+  /* ---------- Header ---------- */
+  header.top {
+    position: sticky; top: 0; z-index: 40;
+    backdrop-filter: blur(14px);
+    background: linear-gradient(180deg, rgba(5,6,12,0.85), rgba(5,6,12,0.4));
+    border-bottom: 1px solid var(--border);
+  }
+  .top-inner {
+    max-width: var(--maxw); margin: 0 auto; padding: 14px 20px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo .mark {
+    width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+    background: radial-gradient(circle at 30% 30%, #ffd27a, #ff8a3d 45%, #ff4d5e 100%);
+    box-shadow: 0 0 22px rgba(255, 138, 61, 0.5);
+  }
+  .logo b { font-family: "Space Grotesk", sans-serif; font-size: 1.18rem; letter-spacing: -0.01em; }
+  .logo span { display: block; font-size: 0.72rem; color: var(--text-dim); font-weight: 500; }
+  .spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 7px 13px; border-radius: 999px; font-size: 0.8rem; font-weight: 500;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+  .dot.live { background: var(--quiet); box-shadow: 0 0 0 0 rgba(47,191,113,0.6); animation: ping 2s infinite; }
+  .dot.cached { background: var(--c-class); }
+  .dot.stale { background: var(--x-class); }
+  @keyframes ping { 0%{box-shadow:0 0 0 0 rgba(47,191,113,0.55)} 70%{box-shadow:0 0 0 7px rgba(47,191,113,0)} 100%{box-shadow:0 0 0 0 rgba(47,191,113,0)} }
+
+  button.btn {
+    font-family: inherit; font-size: 0.83rem; font-weight: 600; cursor: pointer;
+    color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border-strong); border-radius: 10px; padding: 9px 14px;
+    display: inline-flex; align-items: center; gap: 7px; transition: all 0.18s var(--ease);
+  }
+  button.btn:hover { background: rgba(79,140,255,0.16); border-color: var(--accent); }
+  button.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  .btn svg.spin { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- Warning banner ---------- */
+  .alert {
+    margin: 22px 0 4px; border-radius: var(--radius); padding: 16px 18px;
+    display: none; align-items: flex-start; gap: 14px;
+    border: 1px solid var(--x-class);
+    background: linear-gradient(100deg, rgba(255,77,94,0.18), rgba(255,43,208,0.10));
+    box-shadow: 0 0 40px rgba(255,77,94,0.18);
+  }
+  .alert.show { display: flex; }
+  .alert.extreme { border-color: var(--extreme); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 40px rgba(255,43,208,0.18)} 50%{box-shadow:0 0 60px rgba(255,43,208,0.42)} }
+  .alert .ic { color: var(--x-class); flex-shrink: 0; margin-top: 2px; }
+  .alert.extreme .ic { color: var(--extreme); }
+  .alert h2 { font-size: 1.05rem; margin-bottom: 3px; }
+  .alert p { margin: 0; color: var(--text-dim); font-size: 0.9rem; }
+
+  /* ---------- Layout grids ---------- */
+  .section-title { display: flex; align-items: baseline; gap: 12px; margin: 34px 0 16px; }
+  .section-title h2 { font-size: 1.15rem; }
+  .section-title .sub { font-size: 0.82rem; color: var(--text-faint); }
+
+  .grid { display: grid; gap: 16px; }
+  .hero-grid { grid-template-columns: 1.3fr 1fr; }
+  .forecast-grid { grid-template-columns: repeat(3, 1fr); }
+  .meta-grid { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 860px) {
+    .hero-grid, .forecast-grid { grid-template-columns: 1fr; }
+    .meta-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; backdrop-filter: blur(10px); box-shadow: var(--shadow);
+  }
+  .card h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); font-weight: 600; }
+
+  /* Current-conditions hero */
+  .now {
+    display: flex; flex-direction: column; gap: 6px; position: relative; overflow: hidden;
+  }
+  .now .state-row { display: flex; align-items: center; gap: 16px; margin-top: 6px; }
+  .badge-class {
+    font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 3.4rem; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px;
+    font-size: 0.82rem; font-weight: 600; border: 1px solid var(--border-strong);
+  }
+  .chip .d { width: 9px; height: 9px; border-radius: 50%; }
+  .now .detail { display: flex; gap: 26px; margin-top: 16px; flex-wrap: wrap; }
+  .now .detail div span { display: block; font-size: 0.74rem; color: var(--text-faint); margin-bottom: 2px; }
+  .now .detail div b { font-size: 1.15rem; font-family: "IBM Plex Mono", monospace; font-weight: 500; }
+
+  /* Headline 24h forecast */
+  .headline { display: flex; flex-direction: column; justify-content: center; }
+  .gauge { display: flex; align-items: center; gap: 18px; margin: 8px 0 4px; }
+  .gauge .ring { width: 96px; height: 96px; flex-shrink: 0; }
+  .gauge .big { font-family: "Space Grotesk"; font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .gauge .lbl { font-size: 0.84rem; color: var(--text-dim); }
+  .src-note { font-size: 0.74rem; color: var(--text-faint); margin-top: 10px; }
+
+  /* Forecast horizon cards */
+  .horizon h3 { display: flex; justify-content: space-between; align-items: center; }
+  .horizon .exp { font-size: 0.74rem; color: var(--text-dim); }
+  .pbar { margin-top: 13px; }
+  .pbar .lab { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 5px; }
+  .pbar .lab .name { display: flex; align-items: center; gap: 7px; color: var(--text-dim); }
+  .pbar .lab .name i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .pbar .lab .val { font-family: "IBM Plex Mono", monospace; font-weight: 500; }
+  .track { height: 8px; border-radius: 999px; background: rgba(255,255,255,0.07); overflow: hidden; }
+  .track > i { display: block; height: 100%; border-radius: 999px; width: 0; transition: width 0.7s var(--ease); }
+
+  /* Meta tiles */
+  .tile { text-align: left; }
+  .tile span { font-size: 0.74rem; color: var(--text-faint); display: block; margin-bottom: 6px; }
+  .tile b { font-size: 1.5rem; font-family: "Space Grotesk"; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile small { color: var(--text-dim); font-size: 0.78rem; }
+
+  /* Chart */
+  .chart-card { padding: 20px 18px 12px; }
+  #flux-chart { width: 100%; height: 260px; display: block; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.76rem; color: var(--text-dim); margin-top: 6px; }
+  .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+
+  /* Tracks transparency table */
+  table.tracks { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  table.tracks th, table.tracks td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+  table.tracks th { color: var(--text-faint); font-weight: 600; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  table.tracks td.num { font-family: "IBM Plex Mono", monospace; text-align: right; }
+  table.tracks .muted { color: var(--text-faint); }
+
+  /* Regions table */
+  .region-wrap { overflow-x: auto; }
+  table.regions { width: 100%; border-collapse: collapse; font-size: 0.84rem; min-width: 560px; }
+  table.regions th, table.regions td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.regions th:first-child, table.regions td:first-child { text-align: left; }
+  table.regions th { color: var(--text-faint); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; cursor: pointer; user-select: none; }
+  table.regions td.num { font-family: "IBM Plex Mono", monospace; }
+
+  footer { margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 0.8rem; }
+  footer a { color: var(--text-dim); }
+  .disc { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; margin-top: 12px; }
+
+  /* Skeleton + error */
+  .skel { background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.1), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: shimmer 1.3s infinite; border-radius: 6px; color: transparent !important; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  .error-box { display:none; text-align:center; padding: 28px; color: var(--text-dim); }
+  .error-box.show { display: block; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+</style>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+<canvas class="stars" aria-hidden="true"></canvas>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="logo">
+      <div class="mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1a0e00" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5" fill="#1a0e00" stroke="none"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+      </div>
+      <div>
+        <b>Helios</b>
+        <span>Solar Flare Forecast</span>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span class="pill" id="freshness" aria-live="polite"><span class="dot" id="fresh-dot"></span><span id="fresh-text">Connecting…</span></span>
+    <button class="btn" id="refresh" aria-label="Refresh forecast">
+      <svg id="refresh-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      Refresh
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- X-class warning banner (aria-live so screen readers announce it) -->
+  <div class="alert" id="xalert" role="alert" aria-live="assertive">
+    <svg class="ic" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+    <div>
+      <h2 id="xalert-title">X-class flare warning</h2>
+      <p id="xalert-msg"></p>
+    </div>
+  </div>
+
+  <!-- Error state -->
+  <div class="error-box card" id="errbox">
+    <p id="errmsg">Could not reach the forecast service.</p>
+    <button class="btn" onclick="loadAll()">Try again</button>
+  </div>
+
+  <!-- Current conditions + headline forecast -->
+  <div class="section-title"><h2>Current conditions</h2><span class="sub" id="obs-time">—</span></div>
+  <div class="grid hero-grid">
+    <div class="card now">
+      <h3>Live X-ray flux · GOES</h3>
+      <div class="state-row">
+        <span class="badge-class mono" id="now-class">—</span>
+        <span class="chip" id="now-chip"><span class="d"></span><span id="now-state">—</span></span>
+      </div>
+      <div class="detail">
+        <div><span>Current flux (1–8Å)</span><b id="now-flux">— W/m²</b></div>
+        <div><span>24-hour peak</span><b id="peak-class">—</b></div>
+        <div><span>Active regions</span><b id="ar-count">—</b></div>
+      </div>
+    </div>
+
+    <div class="card headline">
+      <h3>24-hour outlook · ensemble</h3>
+      <div class="gauge">
+        <svg class="ring" viewBox="0 0 100 100" id="ring" aria-hidden="true">
+          <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="9"/>
+          <circle cx="50" cy="50" r="42" fill="none" id="ring-fg" stroke="var(--m-class)" stroke-width="9" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264" transform="rotate(-90 50 50)"/>
+        </svg>
+        <div>
+          <div class="big mono" id="ens-pct">—</div>
+          <div class="lbl">chance of an <b>M-class or greater</b> flare</div>
+        </div>
+      </div>
+      <div class="src-note" id="ens-src">—</div>
+    </div>
+  </div>
+
+  <!-- 12 / 24 / 48 h forecast -->
+  <div class="section-title"><h2>Forecast</h2><span class="sub">Probability of ≥1 flare per class, by lead time</span></div>
+  <div class="grid forecast-grid" id="horizons"><!-- filled by JS --></div>
+
+  <!-- Flux chart -->
+  <div class="section-title"><h2>X-ray flux · last 7 days</h2><span class="sub">GOES 1–8Å · log scale</span></div>
+  <div class="card chart-card">
+    <svg id="flux-chart" role="img" aria-label="GOES X-ray flux over the last seven days on a logarithmic scale"></svg>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>1–8Å flux</span>
+      <span><i style="background:var(--c-class)"></i>C threshold</span>
+      <span><i style="background:var(--m-class)"></i>M threshold</span>
+      <span><i style="background:var(--x-class)"></i>X threshold</span>
+    </div>
+  </div>
+
+  <!-- Forecast tracks transparency -->
+  <div class="section-title"><h2>How this forecast is built</h2><span class="sub">Three independent sources, ensembled</span></div>
+  <div class="card">
+    <table class="tracks" aria-label="Forecast source comparison">
+      <thead><tr><th>Source</th><th style="text-align:right">P(C+) 24h</th><th style="text-align:right">P(M+) 24h</th><th style="text-align:right">P(X) 24h</th></tr></thead>
+      <tbody id="tracks-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Active regions -->
+  <div class="section-title"><h2>Active regions</h2><span class="sub" id="ar-date">NOAA SWPC</span></div>
+  <div class="card region-wrap">
+    <table class="regions" id="regions">
+      <thead><tr>
+        <th data-k="region">Region</th><th data-k="spot_class">Spot class</th><th data-k="mag_class">Mag</th>
+        <th data-k="number_spots">Spots</th><th data-k="c_flare_probability">C %</th>
+        <th data-k="m_flare_probability">M %</th><th data-k="x_flare_probability">X %</th>
+      </tr></thead>
+      <tbody id="regions-body"></tbody>
+    </table>
+  </div>
+
+  <footer>
+    <div>Data: <a href="https://www.swpc.noaa.gov/" target="_blank" rel="noopener">NOAA SWPC</a> GOES X-ray flux &amp; region summaries · SWAN-SF SHARP model · NASA DONKI. Generated <span id="gen-time">—</span>.</div>
+    <div class="disc" id="disclaimer">—</div>
+  </footer>
+</div>
+
+<script>
+const API_BASE = new URLSearchParams(location.search).get('api')
+  || (location.protocol === 'file:' ? 'http://127.0.0.1:8000' : '');
+const SEV = { 'no-flare':'var(--quiet)', 'C':'var(--c-class)', 'M':'var(--m-class)', 'X':'var(--x-class)' };
+const fmtPct = p => (p==null ? '—' : Math.round(p*100) + '%');
+
+/* ---------- starfield (decorative, reduced-motion aware) ---------- */
+(function stars(){
+  const c = document.querySelector('.stars'), x = c.getContext('2d');
+  function draw(){
+    c.width = innerWidth; c.height = innerHeight;
+    const n = Math.min(140, (innerWidth*innerHeight)/12000);
+    for(let i=0;i<n;i++){
+      x.globalAlpha = Math.random()*0.7+0.1;
+      x.fillStyle = '#cdd8ff';
+      x.beginPath(); x.arc(Math.random()*c.width, Math.random()*c.height, Math.random()*1.3, 0, 7); x.fill();
+    }
+  }
+  draw(); addEventListener('resize', ()=>{ x.clearRect(0,0,c.width,c.height); draw(); });
+})();
+
+/* ---------- helpers ---------- */
+function setFreshness(status, ageMin){
+  const dot = document.getElementById('fresh-dot'), txt = document.getElementById('fresh-text');
+  dot.className = 'dot ' + (status||'');
+  const age = ageMin==null ? '' : ` · ${Math.round(ageMin)} min old`;
+  txt.textContent = ({live:'Live data', cached:'Cached data', unavailable:'Data unavailable'}[status]||'…') + age;
+}
+
+function pbar(name, color, p){
+  return `<div class="pbar">
+    <div class="lab"><span class="name"><i style="background:${color}"></i>${name}</span>
+      <span class="val">${fmtPct(p)}</span></div>
+    <div class="track"><i style="background:${color}" data-w="${(p||0)*100}"></i></div></div>`;
+}
+
+/* ---------- main load ---------- */
+async function loadAll(){
+  const btn = document.getElementById('refresh'), ic = document.getElementById('refresh-ic');
+  btn.disabled = true; ic.classList.add('spin');
+  document.getElementById('errbox').classList.remove('show');
+  try {
+    const r = await fetch(API_BASE + '/api/forecast', {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    render(await r.json());
+    loadFlux();           // chart loads independently; failure is non-fatal
+  } catch(e){
+    document.getElementById('errmsg').textContent =
+      'Could not reach the forecast service at ' + (API_BASE||location.origin) +
+      '. Is the API running?  (uvicorn api.server:app --port 8000)';
+    document.getElementById('errbox').classList.add('show');
+    setFreshness('unavailable', null);
+  } finally {
+    btn.disabled = false; ic.classList.remove('spin');
+  }
+}
+
+function render(d){
+  setFreshness(d.data_freshness.status, d.data_freshness.xray_age_minutes);
+  document.getElementById('gen-time').textContent = new Date(d.generated_at).toLocaleString();
+  document.getElementById('disclaimer').textContent = d.disclaimer;
+
+  /* nowcast */
+  const nc = d.nowcast || {};
+  const cat = nc.current_category || 'no-flare';
+  document.getElementById('now-class').textContent = nc.current_class || '—';
+  document.getElementById('now-class').style.color = SEV[cat] || 'var(--text)';
+  document.getElementById('obs-time').textContent = nc.observed_at ? 'observed ' + new Date(nc.observed_at).toLocaleTimeString() : '';
+  const chip = document.getElementById('now-chip');
+  chip.querySelector('.d').style.background = SEV[cat];
+  chip.style.color = SEV[cat]; chip.style.borderColor = SEV[cat];
+  document.getElementById('now-state').textContent = nc.is_flaring ? ('Flaring · '+cat+'-class') : 'Quiet (no significant flare)';
+  document.getElementById('now-flux').textContent = nc.current_flux_wm2 ? nc.current_flux_wm2.toExponential(2)+' W/m²' : '—';
+  document.getElementById('peak-class').textContent = nc.peak_24h_class || '—';
+  document.getElementById('peak-class').style.color = SEV[catFromClass(nc.peak_24h_class)] || 'var(--text)';
+  document.getElementById('ar-count').textContent = d.active_region_count ?? '—';
+
+  /* X warning */
+  const w = (nc.x_warning)||{level:'NONE'};
+  const al = document.getElementById('xalert');
+  if(w.level && w.level!=='NONE'){
+    al.classList.add('show'); al.classList.toggle('extreme', w.level==='EXTREME');
+    document.getElementById('xalert-title').textContent = `${w.level} — ${w.scale||'radio blackout risk'}`;
+    document.getElementById('xalert-msg').textContent = w.message;
+  } else { al.classList.remove('show'); }
+
+  /* ensemble 24h ring */
+  const ens = (d.forecast.ensemble_24h)||{};
+  const p = ens.p_M_or_greater_24h;
+  document.getElementById('ens-pct').textContent = fmtPct(p);
+  const ringColor = p>=0.5?'var(--x-class)':p>=0.25?'var(--m-class)':p>=0.1?'var(--c-class)':'var(--quiet)';
+  const fg = document.getElementById('ring-fg');
+  fg.style.stroke = ringColor;
+  requestAnimationFrame(()=>{ fg.style.transition='stroke-dashoffset .9s var(--ease)'; fg.style.strokeDashoffset = 264*(1-(p||0)); });
+  document.getElementById('ens-src').textContent = 'Blended from: ' + ((ens.sources||[]).join(', ') || 'no live sources') +
+    '. Higher weight on NOAA operational + SHARP ML.';
+
+  /* horizon cards */
+  const ft = d.forecast.flux_track||{}, H = ft.horizons||{};
+  const host = document.getElementById('horizons'); host.innerHTML='';
+  [['12h','12-hour'],['24h','24-hour'],['48h','48-hour']].forEach(([k,title])=>{
+    const h = H[k]||{};
+    const card = document.createElement('div'); card.className='card horizon';
+    card.innerHTML = `<h3>${title} <span class="exp">peak: ${h.expected_max_class||'—'}</span></h3>
+      ${pbar('C-class+','var(--c-class)',h.p_C_or_greater)}
+      ${pbar('M-class+','var(--m-class)',h.p_M_or_greater)}
+      ${pbar('X-class','var(--x-class)',h.p_X_class)}`;
+    host.appendChild(card);
+  });
+  requestAnimationFrame(()=>document.querySelectorAll('.track > i').forEach(i=>i.style.width=i.dataset.w+'%'));
+
+  /* tracks table */
+  const noaa = d.forecast.noaa_track||{}, sharp = d.forecast.sharp_track, smodel = d.forecast.sharp_model;
+  const row = (name, c, m, x, note) => `<tr><td>${name}${note?` <span class="muted">· ${note}</span>`:''}</td>
+    <td class="num">${fmtPct(c)}</td><td class="num">${fmtPct(m)}</td><td class="num">${fmtPct(x)}</td></tr>`;
+  let sharpNote;
+  if (sharp) sharpNote = `live · TSS ${Number(sharp.test_tss).toFixed(2)}`;
+  else if (smodel && smodel.trained) sharpNote = `trained TSS ${Number(smodel.test_tss).toFixed(2)}${smodel.synthetic?' (demo)':''} · awaiting magnetic input`;
+  else sharpNote = 'not trained';
+  let body = '';
+  body += row('NOAA SWPC (official)', noaa.p_C_or_greater_24h, noaa.p_M_or_greater_24h, noaa.p_X_class_24h, noaa.available?'live':'offline');
+  body += row('SWAN-SF SHARP model', null, sharp? sharp.p_M_or_greater_24h : null, null, sharpNote);
+  body += row('Flux persistence', H['24h']?.p_C_or_greater, H['24h']?.p_M_or_greater, H['24h']?.p_X_class, 'baseline');
+  document.getElementById('tracks-body').innerHTML = body;
+
+  loadRegions();
+}
+
+function catFromClass(code){
+  if(!code) return 'no-flare';
+  const L = code[0], mag = parseFloat(code.slice(1))||0;
+  if(L==='X') return 'X'; if(L==='M') return 'M';
+  if(L==='C' && mag>=5) return 'C'; return 'no-flare';
+}
+
+/* ---------- regions (separate fetch for the detailed table) ---------- */
+let regionData = [], sortKey='m_flare_probability', sortDir=-1;
+async function loadRegions(){
+  try{
+    const r = await fetch(API_BASE + '/api/regions', {cache:'no-store'});
+    if(!r.ok) return; const j = await r.json();
+    regionData = j.regions||[];
+    if(j.observed_date) document.getElementById('ar-date').textContent = 'NOAA SWPC · '+j.observed_date;
+    drawRegions();
+  }catch(e){/* table is optional */}
+}
+function drawRegions(){
+  const rows = [...regionData].sort((a,b)=>((a[sortKey]??-1)-(b[sortKey]??-1))*sortDir);
+  document.getElementById('regions-body').innerHTML = rows.map(r=>`<tr>
+    <td>AR ${r.region??'—'}</td><td>${r.spot_class||'—'}</td><td>${r.mag_class||'—'}</td>
+    <td class="num">${r.number_spots??'—'}</td>
+    <td class="num">${r.c_flare_probability??'—'}</td>
+    <td class="num" style="color:${(r.m_flare_probability||0)>=30?'var(--m-class)':'inherit'}">${r.m_flare_probability??'—'}</td>
+    <td class="num" style="color:${(r.x_flare_probability||0)>=10?'var(--x-class)':'inherit'}">${r.x_flare_probability??'—'}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="muted">No active regions reported.</td></tr>';
+}
+document.querySelectorAll('#regions th').forEach(th=>th.addEventListener('click',()=>{
+  const k=th.dataset.k; sortDir = (k===sortKey)? -sortDir : -1; sortKey=k; drawRegions();
+}));
+
+/* ---------- flux chart (log-scale SVG) ---------- */
+async function loadFlux(){
+  const svg = document.getElementById('flux-chart');
+  try{
+    const r = await fetch(API_BASE + '/api/flux', {cache:'no-store'});
+    if(!r.ok) throw 0; const j = await r.json();
+    drawChart(svg, j.series||[]);
+  }catch(e){ svg.innerHTML = `<text x="20" y="40" fill="var(--text-faint)" font-size="13">Flux chart unavailable.</text>`; }
+}
+function drawChart(svg, series){
+  const W = svg.clientWidth||900, Hh = 260, pad = {l:46,r:14,t:14,b:24};
+  svg.setAttribute('viewBox', `0 0 ${W} ${Hh}`);
+  if(!series.length){ svg.innerHTML=`<text x="20" y="40" fill="var(--text-faint)">No data.</text>`; return; }
+  const xs = series.map(p=>new Date(p.t).getTime());
+  const x0=Math.min(...xs), x1=Math.max(...xs);
+  const yMin=Math.log10(1e-9), yMax=Math.log10(1e-3);
+  const X = t => pad.l + (t-x0)/(x1-x0||1)*(W-pad.l-pad.r);
+  const Y = f => { const v=Math.log10(Math.max(f,1e-9)); return pad.t + (1-(v-yMin)/(yMax-yMin))*(Hh-pad.t-pad.b); };
+  const bands = [[1e-6,'C','var(--c-class)'],[1e-5,'M','var(--m-class)'],[1e-4,'X','var(--x-class)']];
+  let g = '';
+  bands.forEach(([f,lab,c])=>{ const y=Y(f);
+    g += `<line x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}" stroke="${c}" stroke-opacity="0.35" stroke-dasharray="4 4"/>`;
+    g += `<text x="${pad.l-6}" y="${y+3}" text-anchor="end" fill="${c}" font-size="10" font-family="IBM Plex Mono">${lab}</text>`;
+  });
+  let dpath = series.map((p,i)=>`${i?'L':'M'}${X(new Date(p.t).getTime()).toFixed(1)},${Y(p.flux).toFixed(1)}`).join(' ');
+  const area = dpath + ` L${X(x1)},${Hh-pad.b} L${X(x0)},${Hh-pad.b} Z`;
+  // time axis (every ~day)
+  let ticks='';
+  for(let i=0;i<=7;i++){ const t=x0+(x1-x0)*i/7, xx=X(t);
+    ticks += `<text x="${xx}" y="${Hh-6}" text-anchor="middle" fill="var(--text-faint)" font-size="10">${new Date(t).toLocaleDateString(undefined,{month:'numeric',day:'numeric'})}</text>`; }
+  svg.innerHTML = `<defs><linearGradient id="fg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="var(--accent)" stop-opacity="0.35"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
+    </linearGradient></defs>
+    ${g}<path d="${area}" fill="url(#fg)"/><path d="${dpath}" fill="none" stroke="var(--accent)" stroke-width="1.6"/>${ticks}`;
+}
+
+document.getElementById('refresh').addEventListener('click', loadAll);
+addEventListener('resize', ()=>loadFlux());
+loadAll();
+setInterval(loadAll, 5*60*1000);   // auto-refresh every 5 minutes
+</script>
+</body>
+</html>
