@@ -1,4 +1,4 @@
-# Helios — AI Solar Flare Predictor
+# Helios, weather prediction model
 
 A live, self-training solar-flare forecasting system. It learns from the
 **SWAN-SF** magnetic-field dataset, classifies what the Sun is doing **right
