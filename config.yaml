@@ -1,0 +1,131 @@
+# ======================================================================
+# Solar Flare Predictor — central configuration
+# Everything tunable lives here so the model can be re-trained / re-tuned
+# without touching code. Edit thresholds, paths, and API endpoints freely.
+# ======================================================================
+
+paths:
+  data_dir: data/swansf            # where the .pkl SWAN-SF partitions live
+  model_dir: models                # where trained artifacts are written
+  cache_dir: .cache                # live-data cache (failsafe backups)
+
+# ----------------------------------------------------------------------
+# Flare-class taxonomy.
+# GOES 1-8 Angstrom peak flux (W/m^2) defines the class, by definition:
+#   A < 1e-7 | B 1e-7..1e-6 | C 1e-6..1e-5 | M 1e-5..1e-4 | X >= 1e-4
+# Per the brief: A, B and *weak* C count as "no-flare". Upper-C, M, X
+# are tracked independently, with an escalating warning for big X events.
+# ----------------------------------------------------------------------
+classes:
+  # Flux boundaries (W/m^2) for the operational categories we forecast.
+  noflare_below: 5.0e-6      # anything below this = "no-flare" (A,B,C1-C4.9)
+  upperC_min:    5.0e-6      # C5.0 -> start counting as a real "C" event
+  m_min:         1.0e-5      # M1.0
+  x_min:         1.0e-4      # X1.0
+  # Escalating X warnings:
+  x_warn:        1.0e-4      # any X-class -> WARNING
+  x_severe:      5.0e-4      # >= X5  -> SEVERE
+  x_extreme:     1.0e-3      # >= X10 -> EXTREME (radio blackout R3+)
+  # Ordered category labels used everywhere downstream.
+  order: ["no-flare", "C", "M", "X"]
+
+# ----------------------------------------------------------------------
+# Training task.
+# The Cleaned-SWANSF repo ships BINARY labels (M+/X vs. rest) so the
+# default trainable target is "any M-or-greater flare in the next 24h".
+# If you supply ORIGINAL SWAN-SF multi-class labels, flip task to
+# "multiclass" and the same pipeline trains a 4-way no-flare/C/M/X model.
+# ----------------------------------------------------------------------
+training:
+  task: binary               # "binary" (M+ vs rest) | "multiclass"
+  prediction_window_h: 24    # label horizon baked into SWAN-SF
+  observation_window_h: 12   # length of each input time-series slice
+  # Partition protocol — train on augmented partitions, test on CLEAN
+  # partitions. This is the leakage-free SWAN-SF protocol (no "cheating").
+  train_partitions: [1, 2, 3]
+  val_partition: 4
+  test_partition: 5
+  model: auto                # "auto" = bake-off picks the best; or name one below
+  random_state: 42
+  # Decision threshold is auto-tuned on the validation set to MAXIMISE TSS
+  # (True Skill Statistic) — the standard flare-forecasting skill score.
+  tune_metric: tss
+  # Model bake-off: every available candidate is trained and ranked on the
+  # validation partition by `selection_metric`; the winner is calibrated and
+  # saved. lightgbm/xgboost are included automatically if installed.
+  selection_metric: tss
+  candidates: [hist_gradient_boosting, random_forest, extra_trees, logistic, lightgbm, xgboost]
+  # The high_precision operating point maximises precision while keeping recall
+  # at or above this floor (so it stays useful, not degenerate).
+  high_precision_min_recall: 0.25
+
+# Three selectable decision thresholds, all fitted on validation, frozen for
+# test. Pick which one the live predictor uses via live.operating_point.
+#   high_recall    -> max TSS  (catch the most flares; many false alarms)
+#   balanced       -> max HSS  (best skill/false-alarm balance)
+#   high_precision -> >= target_precision (few false alarms; misses more)
+operating_points: [high_recall, balanced, high_precision]
+
+# Probability bands for the UI — turns a raw % into an at-a-glance level.
+# `min` is the lower bound on P(M+); the highest band whose min <= p wins.
+forecast_bands:
+  - {name: Low,      min: 0.00, tone: quiet}
+  - {name: Moderate, min: 0.15, tone: c}
+  - {name: High,     min: 0.40, tone: m}
+  - {name: Severe,   min: 0.65, tone: x}
+
+# 24 SHARP parameters, in the exact channel order of the .pkl arrays.
+features:
+  sharp:
+    - R_VALUE
+    - TOTUSJH
+    - TOTBSQ
+    - TOTPOT
+    - TOTUSJZ
+    - ABSNJZH
+    - SAVNCPP
+    - USFLUX
+    - TOTFZ
+    - MEANPOT
+    - EPSX
+    - EPSY
+    - EPSZ
+    - MEANSHR
+    - SHRGT45
+    - MEANGAM
+    - MEANGBT
+    - MEANGBZ
+    - MEANGBH
+    - MEANJZH
+    - TOTFY
+    - MEANJZD
+    - MEANALP
+    - TOTFX
+  # Per-channel time-series summary stats engineered into the model.
+  summary_stats: [last, mean, std, min, max, slope, delta]
+
+# ----------------------------------------------------------------------
+# Live data sources. Tried top-to-bottom; first success wins. Every
+# source has a timeout and the predictor degrades gracefully if all fail.
+# ----------------------------------------------------------------------
+live:
+  cache_ttl_minutes: 30
+  request_timeout_s: 20
+  operating_point: balanced    # high_recall | balanced | high_precision
+  xray_sources:
+    - https://services.swpc.noaa.gov/json/goes/primary/xrays-7-day.json
+    - https://services.swpc.noaa.gov/json/goes/secondary/xrays-7-day.json
+    - https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json
+  srs_sources:   # NOAA Solar Region Summary (active-region context)
+    - https://services.swpc.noaa.gov/json/solar_regions.json
+  flare_event_sources:  # recent flare event lists (backup / validation)
+    - https://services.swpc.noaa.gov/json/goes/primary/xray-flares-7-day.json
+  # NASA DONKI solar flare API (extra corroboration; key optional).
+  donki:
+    enabled: true
+    url: https://api.nasa.gov/DONKI/FLR
+    api_key: DEMO_KEY      # replace with your https://api.nasa.gov key
+
+api:
+  host: 127.0.0.1
+  port: 8000

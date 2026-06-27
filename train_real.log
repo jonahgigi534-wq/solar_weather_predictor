@@ -1,0 +1,24 @@
+C:\Users\jonah\AppData\Local\Programs\Python\Python312\Lib\site-packages\sklearn\utils\validation.py:2827: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+Loading data ... (SWAN-SF .pkl)
+  train=(58545, 168)  val=(51261, 168)  test=(75365, 168)  (train pos-rate 0.488)
+
+=== Model bake-off (ranked on validation) ===
+  hist_gradient_boosting    val TSS=0.812   (87s)
+  random_forest             val TSS=0.553   (35s)
+  extra_trees               val TSS=0.864   (11s)
+  logistic                  val TSS=0.022   (5s)
+  lightgbm                  val TSS=0.842   (15s)
+  xgboost                   val TSS=0.753   (32s)
+  -> winner: extra_trees  (val TSS=0.864)
+
+Calibrating extra_trees (isotonic) ...
+
+=== Operating points on CLEAN TEST partition ===
+  point              thr    TSS  recall   prec     F1
+  high_recall      0.066  0.745   0.989  0.051  0.097
+  balanced         0.329  0.870   0.927  0.177  0.297 *
+  high_precision   0.754  0.678   0.696  0.336  0.453
+  (* = default used by the live predictor; change via live.operating_point)
+
+Saved extra_trees -> C:\Users\jonah\Documents\SolarFlareProject\models\flare_sharp_model.joblib (+ .pkl, .meta.json)
